@@ -19,7 +19,6 @@ use serenity::all::{
 	EventHandler,
 	ExecuteWebhook,
 	GatewayIntents,
-	GuildChannel,
 	GuildId,
 	Interaction,
 	Message,
