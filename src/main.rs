@@ -163,10 +163,6 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 	format!("Done sending {}", messages_count).to_string()
 }
 
-async fn move_thread_to_text_channel(ctx: &Context, command: &CommandInteraction, channel_id: ChannelId) -> String {
-	"Ping from text channel".to_string()
-}
-
 pub async fn get_messages(ctx: &Context, channel_id: ChannelId) -> Result<Vec<Message>, serenity::Error> {
 	let mut page: Option<MessagePagination> = None;
 
@@ -212,10 +208,7 @@ pub async fn move_thread(ctx: &Context, command: &CommandInteraction, options: &
 			ResolvedValue::Channel(target_channel) if target_channel.kind == ChannelType::Forum => {
 				move_thread_to_forum_channel(ctx, command, target_channel).await
 			}
-			ResolvedValue::Channel(target_channel) if target_channel.kind == ChannelType::Text => {
-				move_thread_to_text_channel(ctx, command, target_channel.id).await
-			}
-			_ => "Not a channel".to_string(),
+			_ => "Not supported channel".to_string(),
 		}
 	} else {
 		"No channel".to_string()
