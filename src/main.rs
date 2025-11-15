@@ -1,10 +1,12 @@
 // vim: set sw=2 ts=2:
+#![feature(if_let_guard)]
 #![cfg_attr(debug_assertions, allow(warnings))]
 #![cfg_attr(not(debug_assertions), deny(warnings, clippy::unwrap_used))]
 
 use std::sync::Arc;
 
 use serenity::all::{
+	Channel,
 	ChannelId,
 	ChannelType,
 	CommandInteraction,
@@ -17,6 +19,7 @@ use serenity::all::{
 	EventHandler,
 	ExecuteWebhook,
 	GatewayIntents,
+	GuildChannel,
 	GuildId,
 	Interaction,
 	Message,
@@ -189,6 +192,20 @@ pub async fn get_messages(ctx: &Context, channel_id: ChannelId) -> Result<Vec<Me
 }
 
 pub async fn move_thread(ctx: &Context, command: &CommandInteraction, options: &[ResolvedOption<'_>]) -> String {
+	let Some(ref channel) = command.channel else {
+		return "No channel".to_string();
+	};
+
+	match channel {
+		PartialChannel {
+			kind: ChannelType::PublicThread,
+			parent_id: Some(parent_id),
+			..
+		} if let Ok(Channel::Guild(parent)) = parent_id.to_channel(ctx).await
+			&& parent.kind == ChannelType::Forum => {}
+		_ => return "Invoke the command from thread".to_string(),
+	}
+
 	let option = options.iter().find(|o| o.name == "channel");
 	if let Some(option) = option {
 		match option.value {
