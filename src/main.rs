@@ -31,6 +31,7 @@ use serenity::async_trait;
 use tokio::sync::RwLock;
 
 const COMMAND_NAMES: &[&str] = &["mv"];
+const MVT_MIGRATOR: &'static str = "MVT_MIGRATOR";
 
 struct Handler {
 	in_progress: Arc<RwLock<bool>>,
@@ -50,11 +51,11 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 		.await
 		.unwrap_or_default()
 		.into_iter()
-		.find(|e| e.name.as_ref().map(|e| e.as_str()).unwrap_or_default() == "MVT_MIGRATOR")
+		.find(|e| e.name.as_ref().map(|e| e.as_str()).unwrap_or_default() == MVT_MIGRATOR)
 	{
 		wh
 	} else {
-		let webhook = CreateWebhook::new("MVT_MIGRATOR").name("MVT_MIGRATOR");
+		let webhook = CreateWebhook::new(MVT_MIGRATOR).name(MVT_MIGRATOR);
 
 		target_channel_id.create_webhook(ctx, webhook).await.unwrap()
 	};
