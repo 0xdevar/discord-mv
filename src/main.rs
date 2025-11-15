@@ -33,6 +33,7 @@ const COMMAND_NAMES: &[&str] = &["mv"];
 
 struct Handler {
 	in_progress: Arc<RwLock<bool>>,
+	guild_id: RwLock<GuildId>,
 }
 
 async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteraction, channel: &PartialChannel) -> String {
@@ -206,7 +207,9 @@ impl EventHandler for Handler {
 	async fn ready(&self, ctx: Context, ready: Ready) {
 		println!("Logged in as {}", ready.user.name);
 
-		let guild = GuildId::new(942802258528198666);
+		let guild = {
+      *self.guild_id.read().await
+    };
 
 		let commands = guild.get_commands(&ctx).await.unwrap_or(vec![]);
 
@@ -280,10 +283,14 @@ impl EventHandler for Handler {
 
 #[tokio::main]
 async fn main() {
-	let token = std::env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
+	let token = std::env::var("DISCORD_TOKEN").expect("Expected `DISCORD_TOKEN` in the environment");
+	let guild_id = std::env::var("DISCORD_GUILD_ID").expect("Expected `DISCORD_GUILD_ID` in the environment");
 
 	let event_handler = Handler {
 		in_progress: Arc::new(RwLock::new(false)),
+		guild_id: RwLock::new(
+			GuildId::try_from(guild_id.parse::<u64>().expect("Expect a valid guild id")).expect("Expected a valid guild id"),
+		),
 	};
 
 	let client = serenity::Client::builder(token, GatewayIntents::all())
