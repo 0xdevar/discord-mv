@@ -25,6 +25,7 @@ use serenity::all::{
 	Ready,
 	ResolvedOption,
 	ResolvedValue,
+	RoleId,
 };
 use serenity::async_trait;
 use tokio::sync::RwLock;
@@ -34,6 +35,7 @@ const COMMAND_NAMES: &[&str] = &["mv"];
 struct Handler {
 	in_progress: Arc<RwLock<bool>>,
 	guild_id: RwLock<GuildId>,
+	role_id: RwLock<RoleId>,
 }
 
 async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteraction, channel: &PartialChannel) -> String {
@@ -207,9 +209,7 @@ impl EventHandler for Handler {
 	async fn ready(&self, ctx: Context, ready: Ready) {
 		println!("Logged in as {}", ready.user.name);
 
-		let guild = {
-      *self.guild_id.read().await
-    };
+		let guild = { *self.guild_id.read().await };
 
 		let commands = guild.get_commands(&ctx).await.unwrap_or(vec![]);
 
@@ -241,23 +241,33 @@ impl EventHandler for Handler {
 	}
 
 	async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
-		if let Interaction::Command(command) = interaction {
-			command.defer(&ctx).await.ok();
-			let content = match command.data.name.as_str() {
-				"mv" => {
-					let already = {
-						let mut in_progress = self.in_progress.write().await;
-						if *in_progress {
-							true
-						} else {
-							*in_progress = true;
-							false
-						}
-					};
+		match interaction {
+			Interaction::Command(command) => {
+				command.defer(&ctx).await.ok();
+				let content = (async || match command.data.name.as_str() {
+					"mv" => {
+						let allowed_role_id = { *self.role_id.read().await };
 
-					if already {
-						Some("Already processing".to_string())
-					} else {
+						if let Some(ref member) = command.member
+							&& !member.roles.iter().any(|e| e == &allowed_role_id)
+						{
+							return Some("Not allowed".to_string());
+						}
+
+						let already = {
+							let mut in_progress = self.in_progress.write().await;
+							if *in_progress {
+								true
+							} else {
+								*in_progress = true;
+								false
+							}
+						};
+
+						if already {
+							return Some("Already processing".to_string());
+						}
+
 						let s = move_thread(&ctx, &command, &command.data.options()).await;
 
 						{
@@ -267,16 +277,18 @@ impl EventHandler for Handler {
 
 						Some(s)
 					}
-				}
-				_ => Some("not implemented :(".to_string()),
-			};
+					_ => Some("not implemented :(".to_string()),
+				})()
+				.await;
 
-			if let Some(content) = content {
-				let builder = CreateInteractionResponseFollowup::new().content(content);
-				if let Err(why) = command.create_followup(&ctx.http, builder).await {
-					println!("Cannot respond to slash command: {why}");
+				if let Some(content) = content {
+					let builder = CreateInteractionResponseFollowup::new().content(content);
+					if let Err(why) = command.create_followup(&ctx.http, builder).await {
+						println!("Cannot respond to slash command: {why}");
+					}
 				}
 			}
+			_ => (),
 		}
 	}
 }
@@ -285,11 +297,15 @@ impl EventHandler for Handler {
 async fn main() {
 	let token = std::env::var("DISCORD_TOKEN").expect("Expected `DISCORD_TOKEN` in the environment");
 	let guild_id = std::env::var("DISCORD_GUILD_ID").expect("Expected `DISCORD_GUILD_ID` in the environment");
+	let role_id = std::env::var("DISCORD_ROLE_ID").expect("Expected `DISCORD_ROLE_ID` in the environment");
 
 	let event_handler = Handler {
 		in_progress: Arc::new(RwLock::new(false)),
 		guild_id: RwLock::new(
 			GuildId::try_from(guild_id.parse::<u64>().expect("Expect a valid guild id")).expect("Expected a valid guild id"),
+		),
+		role_id: RwLock::new(
+			RoleId::try_from(role_id.parse::<u64>().expect("Expect a valid role id")).expect("Expected a valid role id"),
 		),
 	};
 
