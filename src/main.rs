@@ -144,13 +144,6 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 				}
 			};
 
-			let content = format!(
-				r"
-{}
-",
-				message.content
-			);
-
 			let mut files = vec![];
 
 			for a in message.attachments {
@@ -162,7 +155,7 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 
 			let ex = ExecuteWebhook::new()
 				.in_thread(thread)
-				.content(content)
+				.content(message.content)
 				.username(format!("{display_name} - ({username})"))
         .add_files(files)
 				.embeds(message.embeds.into_iter().map(std::convert::Into::into).collect::<Vec<_>>());
