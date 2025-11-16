@@ -144,10 +144,6 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 				}
 			};
 
-			if message.content.trim().is_empty() {
-				continue;
-			}
-
 			let content = format!(
 				r#"
 {}
@@ -168,6 +164,7 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 				.in_thread(thread)
 				.content(content)
 				.username(format!("{} - ({})", display_name, username))
+        .add_files(files)
 				.embeds(message.embeds.into_iter().map(|e| e.into()).collect::<Vec<_>>());
 
 			let ex = if let Some(avatar) = message.author.avatar_url() {
