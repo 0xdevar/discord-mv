@@ -66,7 +66,7 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 		webhook
 	};
 
-	let Ok(mut messages) = get_messages(ctx, source_channel.id).await.map(|e| e.into_iter()) else {
+	let Ok(mut messages) = get_messages(ctx, source_channel.id).await.map(std::iter::IntoIterator::into_iter) else {
 		return "No messages found".to_string();
 	};
 
@@ -83,18 +83,18 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 			if let Some(ref member) = first_message.author.member
 				&& let Some(ref member) = member.user
 			{
-				(member.name.to_string(), member.display_name().to_string())
+				(member.name.as_str(), member.display_name())
 			} else {
-				let user = first_message.author.clone();
-				(user.name.to_string(), user.display_name().to_string())
+				let user = &first_message.author;
+				(user.name.as_str(), user.display_name())
 			}
 		};
 
 		let content = format!(
-			r#"
+			r"
 {}
 ||OP: <@{}>||
-"#,
+",
 			first_message.content, first_message.author.id
 		);
 
@@ -110,8 +110,8 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 		let ex = ExecuteWebhook::new()
 			.thread_name(source_channel.name.clone().unwrap_or_else(|| "Thread".to_string()))
 			.content(content)
-			.embeds(first_message.embeds.into_iter().map(|e| e.into()).collect::<Vec<_>>())
-			.username(format!("{} - ({})", display_name, username))
+			.embeds(first_message.embeds.into_iter().map(std::convert::Into::into).collect::<Vec<_>>())
+			.username(format!("{display_name} - ({username})"))
 			.add_files(files);
 
 		let ex = if let Some(avatar) = first_message.author.avatar_url() {
@@ -145,9 +145,9 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 			};
 
 			let content = format!(
-				r#"
+				r"
 {}
-"#,
+",
 				message.content
 			);
 
@@ -163,9 +163,9 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 			let ex = ExecuteWebhook::new()
 				.in_thread(thread)
 				.content(content)
-				.username(format!("{} - ({})", display_name, username))
+				.username(format!("{display_name} - ({username})"))
         .add_files(files)
-				.embeds(message.embeds.into_iter().map(|e| e.into()).collect::<Vec<_>>());
+				.embeds(message.embeds.into_iter().map(std::convert::Into::into).collect::<Vec<_>>());
 
 			let ex = if let Some(avatar) = message.author.avatar_url() {
 				ex.avatar_url(avatar)
@@ -177,7 +177,7 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 		}
 	}
 
-	format!("Done sending {}", messages_count).to_string()
+  format!("Done sending {messages_count}").to_string()
 }
 
 pub async fn get_messages(ctx: &Context, channel_id: ChannelId) -> Result<Vec<Message>, serenity::Error> {
@@ -336,6 +336,6 @@ async fn main() {
 		.await;
 
 	if let Err(why) = client.expect("Could not start client").start().await {
-		println!("An error occurred while running the client: {:?}", why);
+		println!("An error occurred while running the client: {why:?}");
 	}
 }
