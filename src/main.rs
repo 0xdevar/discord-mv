@@ -33,7 +33,7 @@ use serenity::async_trait;
 use tokio::sync::RwLock;
 
 const COMMAND_NAMES: &[&str] = &["mv"];
-const MVT_MIGRATOR: &'static str = "MVT_MIGRATOR";
+const MVT_MIGRATOR: &str = "MVT_MIGRATOR";
 
 struct Handler {
 	in_progress: Arc<RwLock<bool>>,
@@ -53,16 +53,23 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 		.await
 		.unwrap_or_default()
 		.into_iter()
-		.find(|e| e.name.as_ref().map(|e| e.as_str()).unwrap_or_default() == MVT_MIGRATOR)
+		.find(|e| e.name.as_deref().unwrap_or_default() == MVT_MIGRATOR)
 	{
 		wh
 	} else {
 		let webhook = CreateWebhook::new(MVT_MIGRATOR).name(MVT_MIGRATOR);
 
-		target_channel_id.create_webhook(ctx, webhook).await.unwrap()
+		let Ok(webhook) = target_channel_id.create_webhook(ctx, webhook).await else {
+			return "Unable to create the webhook".to_string();
+		};
+
+		webhook
 	};
 
-	let mut messages = get_messages(ctx, source_channel.id).await.unwrap().into_iter();
+	let Ok(mut messages) = get_messages(ctx, source_channel.id).await.map(|e| e.into_iter()) else {
+		return "No messages found".to_string();
+	};
+
 	let messages_count = messages.len();
 
 	let thread = {
@@ -105,9 +112,17 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 			.content(content)
 			.embeds(first_message.embeds.into_iter().map(|e| e.into()).collect::<Vec<_>>())
 			.username(format!("{} - ({})", display_name, username))
-			.add_files(files)
-			.avatar_url(first_message.author.avatar_url().unwrap());
-		let x = wh.execute(ctx, true, ex).await.unwrap();
+			.add_files(files);
+
+		let ex = if let Some(avatar) = first_message.author.avatar_url() {
+			ex.avatar_url(avatar)
+		} else {
+			ex
+		};
+
+		let Ok(x) = wh.execute(ctx, true, ex).await else {
+			return "Unable to send the first message".to_string();
+		};
 
 		let Some(message) = x else {
 			return "No more messages found".to_string();
@@ -153,9 +168,15 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 				.in_thread(thread)
 				.content(content)
 				.username(format!("{} - ({})", display_name, username))
-				.embeds(message.embeds.into_iter().map(|e| e.into()).collect::<Vec<_>>())
-				.avatar_url(message.author.avatar_url().unwrap());
-			wh.execute(ctx, false, ex).await.unwrap();
+				.embeds(message.embeds.into_iter().map(|e| e.into()).collect::<Vec<_>>());
+
+			let ex = if let Some(avatar) = message.author.avatar_url() {
+				ex.avatar_url(avatar)
+			} else {
+				ex
+			};
+
+			wh.execute(ctx, false, ex).await.ok();
 		}
 	}
 
@@ -251,54 +272,52 @@ impl EventHandler for Handler {
 	}
 
 	async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
-		match interaction {
-			Interaction::Command(command) => {
-				command.defer(&ctx).await.ok();
-				let content = (async || match command.data.name.as_str() {
-					"mv" => {
-						let allowed_role_id = { *self.role_id.read().await };
+		if let Interaction::Command(command) = interaction {
+			command.defer(&ctx).await.ok();
+			#[allow(clippy::redundant_closure_call)]
+			let content = (async || match command.data.name.as_str() {
+				"mv" => {
+					let allowed_role_id = { *self.role_id.read().await };
 
-						if let Some(ref member) = command.member
-							&& !member.roles.iter().any(|e| e == &allowed_role_id)
-						{
-							return Some("Not allowed".to_string());
-						}
-
-						let already = {
-							let mut in_progress = self.in_progress.write().await;
-							if *in_progress {
-								true
-							} else {
-								*in_progress = true;
-								false
-							}
-						};
-
-						if already {
-							return Some("Already processing".to_string());
-						}
-
-						let s = move_thread(&ctx, &command, &command.data.options()).await;
-
-						{
-							let mut in_progress = self.in_progress.write().await;
-							*in_progress = false;
-						}
-
-						Some(s)
+					if let Some(ref member) = command.member
+						&& !member.roles.iter().any(|e| e == &allowed_role_id)
+					{
+						return Some("Not allowed".to_string());
 					}
-					_ => Some("not implemented :(".to_string()),
-				})()
-				.await;
 
-				if let Some(content) = content {
-					let builder = CreateInteractionResponseFollowup::new().content(content);
-					if let Err(why) = command.create_followup(&ctx.http, builder).await {
-						println!("Cannot respond to slash command: {why}");
+					let already = {
+						let mut in_progress = self.in_progress.write().await;
+						if *in_progress {
+							true
+						} else {
+							*in_progress = true;
+							false
+						}
+					};
+
+					if already {
+						return Some("Already processing".to_string());
 					}
+
+					let s = move_thread(&ctx, &command, &command.data.options()).await;
+
+					{
+						let mut in_progress = self.in_progress.write().await;
+						*in_progress = false;
+					}
+
+					Some(s)
+				}
+				_ => Some("not implemented :(".to_string()),
+			})()
+			.await;
+
+			if let Some(content) = content {
+				let builder = CreateInteractionResponseFollowup::new().content(content);
+				if let Err(why) = command.create_followup(&ctx.http, builder).await {
+					println!("Cannot respond to slash command: {why}");
 				}
 			}
-			_ => (),
 		}
 	}
 }
@@ -311,12 +330,8 @@ async fn main() {
 
 	let event_handler = Handler {
 		in_progress: Arc::new(RwLock::new(false)),
-		guild_id: RwLock::new(
-			GuildId::try_from(guild_id.parse::<u64>().expect("Expect a valid guild id")).expect("Expected a valid guild id"),
-		),
-		role_id: RwLock::new(
-			RoleId::try_from(role_id.parse::<u64>().expect("Expect a valid role id")).expect("Expected a valid role id"),
-		),
+		guild_id: RwLock::new(GuildId::from(guild_id.parse::<u64>().expect("Expect a valid guild id"))),
+		role_id: RwLock::new(RoleId::from(role_id.parse::<u64>().expect("Expect a valid role id"))),
 	};
 
 	let client = serenity::Client::builder(token, GatewayIntents::all())
