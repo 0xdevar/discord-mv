@@ -21,6 +21,7 @@ use serenity::all::{
 	GatewayIntents,
 	GuildId,
 	Interaction,
+	Mentionable,
 	Message,
 	MessagePagination,
 	PartialChannel,
@@ -41,9 +42,13 @@ struct Handler {
 	role_id: RwLock<RoleId>,
 }
 
-async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteraction, channel: &PartialChannel) -> String {
+async fn move_thread_to_forum_channel<'a>(
+	ctx: &Context,
+	command: &CommandInteraction,
+	channel: &PartialChannel,
+) -> &'a str {
 	let Some(ref source_channel) = command.channel else {
-		return "No channel found".to_string();
+		return "No channel found";
 	};
 
 	let target_channel_id = channel.id;
@@ -60,7 +65,7 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 		let webhook = CreateWebhook::new(MVT_MIGRATOR).name(MVT_MIGRATOR);
 
 		let Ok(webhook) = target_channel_id.create_webhook(ctx, webhook).await else {
-			return "Unable to create the webhook".to_string();
+			return "Unable to create the webhook";
 		};
 
 		webhook
@@ -70,16 +75,14 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 		.await
 		.map(std::iter::IntoIterator::into_iter)
 	else {
-		return "No messages found".to_string();
+		return "No messages found";
 	};
-
-	let messages_count = messages.len();
 
 	let thread = {
 		let message = { messages.next() };
 
 		let Some(first_message) = message else {
-			return "No messages found".to_string();
+			return "No messages found";
 		};
 
 		let (username, display_name) = {
@@ -130,11 +133,11 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 		};
 
 		let Ok(x) = wh.execute(ctx, true, ex).await else {
-			return "Unable to send the first message".to_string();
+			return "Unable to send the first message";
 		};
 
 		let Some(message) = x else {
-			return "No more messages found".to_string();
+			return "No more messages found";
 		};
 
 		message.channel_id
@@ -185,7 +188,7 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 		}
 	}
 
-	format!("Done sending {messages_count}").to_string()
+	"Done"
 }
 
 pub async fn get_messages(ctx: &Context, channel_id: ChannelId) -> Result<Vec<Message>, serenity::Error> {
@@ -212,7 +215,7 @@ pub async fn get_messages(ctx: &Context, channel_id: ChannelId) -> Result<Vec<Me
 	Ok(out_messages)
 }
 
-pub async fn move_thread(ctx: &Context, command: &CommandInteraction, options: &[ResolvedOption<'_>]) -> String {
+pub async fn move_thread<'a>(ctx: &Context, command: &CommandInteraction, options: &[ResolvedOption<'_>]) -> &'a str {
 	match command.channel {
 		Some(PartialChannel {
 			kind: ChannelType::PublicThread,
@@ -220,7 +223,7 @@ pub async fn move_thread(ctx: &Context, command: &CommandInteraction, options: &
 			..
 		}) if let Ok(Channel::Guild(parent)) = parent_id.to_channel(ctx).await
 			&& parent.kind == ChannelType::Forum => {}
-		_ => return "Invoke the command from a forum thread".to_string(),
+		_ => return "Invoke the command from a forum thread",
 	}
 
 	let option = options.iter().find(|o| o.name == "channel");
@@ -235,7 +238,7 @@ pub async fn move_thread(ctx: &Context, command: &CommandInteraction, options: &
 				),
 			..
 		}) => move_thread_to_forum_channel(ctx, command, target_channel).await,
-		_ => return "Target channel is not a forum".to_string(),
+		_ => "Target channel is not a forum",
 	}
 }
 
@@ -286,7 +289,7 @@ impl EventHandler for Handler {
 					if let Some(ref member) = command.member
 						&& !member.roles.iter().any(|e| e == &allowed_role_id)
 					{
-						return Some("Not allowed".to_string());
+						return Some("Not allowed");
 					}
 
 					let already = {
@@ -300,7 +303,7 @@ impl EventHandler for Handler {
 					};
 
 					if already {
-						return Some("Already processing".to_string());
+						return Some("Already processing");
 					}
 
 					let s = move_thread(&ctx, &command, &command.data.options()).await;
@@ -312,12 +315,12 @@ impl EventHandler for Handler {
 
 					Some(s)
 				}
-				_ => Some("not implemented :(".to_string()),
+				_ => Some("not implemented :("),
 			})()
 			.await;
 
 			if let Some(content) = content {
-				let builder = CreateInteractionResponseFollowup::new().content(content);
+				let builder = CreateInteractionResponseFollowup::new().content(format!("{} {content}", command.user.mention()));
 				if let Err(why) = command.create_followup(&ctx.http, builder).await {
 					println!("Cannot respond to slash command: {why}");
 				}
