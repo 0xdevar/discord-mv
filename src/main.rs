@@ -66,7 +66,10 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 		webhook
 	};
 
-	let Ok(mut messages) = get_messages(ctx, source_channel.id).await.map(std::iter::IntoIterator::into_iter) else {
+	let Ok(mut messages) = get_messages(ctx, source_channel.id)
+		.await
+		.map(std::iter::IntoIterator::into_iter)
+	else {
 		return "No messages found".to_string();
 	};
 
@@ -110,7 +113,13 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 		let ex = ExecuteWebhook::new()
 			.thread_name(source_channel.name.clone().unwrap_or_else(|| "Thread".to_string()))
 			.content(content)
-			.embeds(first_message.embeds.into_iter().map(std::convert::Into::into).collect::<Vec<_>>())
+			.embeds(
+				first_message
+					.embeds
+					.into_iter()
+					.map(std::convert::Into::into)
+					.collect::<Vec<_>>(),
+			)
 			.username(format!("{display_name} - ({username})"))
 			.add_files(files);
 
@@ -157,8 +166,14 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 				.in_thread(thread)
 				.content(message.content)
 				.username(format!("{display_name} - ({username})"))
-        .add_files(files)
-				.embeds(message.embeds.into_iter().map(std::convert::Into::into).collect::<Vec<_>>());
+				.add_files(files)
+				.embeds(
+					message
+						.embeds
+						.into_iter()
+						.map(std::convert::Into::into)
+						.collect::<Vec<_>>(),
+				);
 
 			let ex = if let Some(avatar) = message.author.avatar_url() {
 				ex.avatar_url(avatar)
@@ -170,7 +185,7 @@ async fn move_thread_to_forum_channel(ctx: &Context, command: &CommandInteractio
 		}
 	}
 
-  format!("Done sending {messages_count}").to_string()
+	format!("Done sending {messages_count}").to_string()
 }
 
 pub async fn get_messages(ctx: &Context, channel_id: ChannelId) -> Result<Vec<Message>, serenity::Error> {
@@ -198,30 +213,29 @@ pub async fn get_messages(ctx: &Context, channel_id: ChannelId) -> Result<Vec<Me
 }
 
 pub async fn move_thread(ctx: &Context, command: &CommandInteraction, options: &[ResolvedOption<'_>]) -> String {
-	let Some(ref channel) = command.channel else {
-		return "No channel".to_string();
-	};
-
-	match channel {
-		PartialChannel {
+	match command.channel {
+		Some(PartialChannel {
 			kind: ChannelType::PublicThread,
 			parent_id: Some(parent_id),
 			..
-		} if let Ok(Channel::Guild(parent)) = parent_id.to_channel(ctx).await
+		}) if let Ok(Channel::Guild(parent)) = parent_id.to_channel(ctx).await
 			&& parent.kind == ChannelType::Forum => {}
-		_ => return "Invoke the command from thread".to_string(),
+		_ => return "Invoke the command from a forum thread".to_string(),
 	}
 
 	let option = options.iter().find(|o| o.name == "channel");
-	if let Some(option) = option {
-		match option.value {
-			ResolvedValue::Channel(target_channel) if target_channel.kind == ChannelType::Forum => {
-				move_thread_to_forum_channel(ctx, command, target_channel).await
-			}
-			_ => "Not supported channel".to_string(),
-		}
-	} else {
-		"No channel".to_string()
+	match option {
+		Some(ResolvedOption {
+			value:
+				ResolvedValue::Channel(
+					target_channel @ PartialChannel {
+						kind: ChannelType::Forum,
+						..
+					},
+				),
+			..
+		}) => move_thread_to_forum_channel(ctx, command, target_channel).await,
+		_ => return "Target channel is not a forum".to_string(),
 	}
 }
 
