@@ -11,6 +11,7 @@ use serenity::all::{
 	ChannelType,
 	CommandInteraction,
 	Context,
+	CreateAllowedMentions,
 	CreateAttachment,
 	CreateCommand,
 	CreateCommandOption,
@@ -30,6 +31,7 @@ use serenity::all::{
 	ResolvedValue,
 	RoleId,
 };
+
 use serenity::async_trait;
 use tokio::sync::RwLock;
 
@@ -116,6 +118,7 @@ async fn move_thread_to_forum_channel<'a>(
 		let ex = ExecuteWebhook::new()
 			.thread_name(source_channel.name.clone().unwrap_or_else(|| "Thread".to_string()))
 			.content(content)
+			.allowed_mentions(CreateAllowedMentions::new().empty_users().empty_roles())
 			.embeds(
 				first_message
 					.embeds
@@ -169,6 +172,7 @@ async fn move_thread_to_forum_channel<'a>(
 				.in_thread(thread)
 				.content(message.content)
 				.username(format!("{display_name} - ({username})"))
+				.allowed_mentions(CreateAllowedMentions::new().empty_users().empty_roles())
 				.add_files(files)
 				.embeds(
 					message
