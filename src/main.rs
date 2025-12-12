@@ -60,7 +60,7 @@ impl std::fmt::Display for Error {
 		match self {
 			Error::NoChannel => write!(f, "No channel found"),
 			Error::NoMessages => write!(f, "No messages found"),
-      Error::UnableToRetieveMessages(why) => write!(f, "Unable to retrieve the messages: {why}"),
+			Error::UnableToRetieveMessages(why) => write!(f, "Unable to retrieve the messages: {why}"),
 			Error::UnableToSendMessage(why) => write!(f, "Unable to send the message: {why}"),
 			Error::UnableToCreateWebhook(why) => write!(f, "Unable to create the webhook: {why}"),
 			Error::NotAllowed => write!(f, "Not allowed"),
