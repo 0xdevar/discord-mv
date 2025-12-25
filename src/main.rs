@@ -345,7 +345,7 @@ impl EventHandler for Handler {
 
 	async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
 		if let Interaction::Command(command) = interaction {
-			command.defer_ephemeral(&ctx).await.ok();
+			command.defer(&ctx).await.ok();
 			#[allow(clippy::redundant_closure_call)]
 			let r = (async || -> Result<String, Error> {
 				match command.data.name.as_str() {
