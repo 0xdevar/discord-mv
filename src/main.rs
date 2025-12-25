@@ -74,6 +74,7 @@ async fn move_thread_to_forum_channel(
 	ctx: &Context,
 	command: &CommandInteraction,
 	channel: &PartialChannel,
+	with_author: bool,
 ) -> Result<(), Error> {
 	let Some(ref source_channel) = command.channel else {
 		return Err(Error::NoChannel);
@@ -213,8 +214,20 @@ async fn move_thread_to_forum_channel(
 				ex
 			};
 
-			wh.execute(ctx, false, ex).await.ok();
-		}
+		wh.execute(ctx, false, ex).await.ok();
+	}
+}
+
+	// Add final message with the author who moved the thread
+	if with_author {
+		let moved_by_content = format!("||Moved by: {}||", command.user.mention());
+		let ex = ExecuteWebhook::new()
+			.in_thread(thread)
+			.content(moved_by_content)
+			.username("Thread Migrator")
+			.allowed_mentions(CreateAllowedMentions::new().empty_users().empty_roles());
+
+		wh.execute(ctx, false, ex).await.ok();
 	}
 
 	Ok(())
@@ -255,6 +268,18 @@ pub async fn move_thread(ctx: &Context, command: &CommandInteraction, options: &
 		_ => return "Invoke the command from a forum thread".to_string(),
 	}
 
+	let with_author = options
+		.iter()
+		.find(|o| o.name == "with_author")
+		.and_then(|o| {
+			if let ResolvedValue::Boolean(value) = o.value {
+				Some(value)
+			} else {
+				None
+			}
+		})
+		.unwrap_or(true);
+
 	let option = options.iter().find(|o| o.name == "channel");
 	match option {
 		Some(ResolvedOption {
@@ -266,7 +291,7 @@ pub async fn move_thread(ctx: &Context, command: &CommandInteraction, options: &
 					},
 				),
 			..
-		}) => match move_thread_to_forum_channel(ctx, command, target_channel).await {
+		}) => match move_thread_to_forum_channel(ctx, command, target_channel, with_author).await {
 			Ok(_) => format!("Message sent to {}", target_channel.id.mention()),
 			Err(error) => error.to_string(),
 		},
@@ -303,6 +328,14 @@ impl EventHandler for Handler {
 							"channel",
 							"The target channel you want to move this thread to",
 						))
+						.add_option(
+							CreateCommandOption::new(
+								serenity::all::CommandOptionType::Boolean,
+								"with_author",
+								"Include 'Moved by' message (default: true)",
+							)
+							.required(false),
+						)
 						.description("Move a thread to another channel"),
 				],
 			)
