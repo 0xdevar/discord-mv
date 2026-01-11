@@ -54,6 +54,7 @@ enum Error {
 	AlreadyProcessing,
 	NotImplemented,
 	ThreadNotFound,
+	SkipExceedsMessages(String),
 }
 
 impl std::fmt::Display for Error {
@@ -68,6 +69,7 @@ impl std::fmt::Display for Error {
 			Error::AlreadyProcessing => write!(f, "Already processing"),
 			Error::NotImplemented => write!(f, "Not implemented :("),
 			Error::ThreadNotFound => write!(f, "Thread not found. Use <channel> if you want the bot to create a new thread."),
+			Error::SkipExceedsMessages(last_url) => write!(f, "No message to send after {last_url}"),
 		}
 	}
 }
@@ -77,6 +79,7 @@ async fn move_thread_to_forum_channel(
 	command: &CommandInteraction,
 	channel: &PartialChannel,
 	with_author: bool,
+	skip: usize,
 ) -> Result<(), Error> {
 	let Some(ref source_channel) = command.channel else {
 		return Err(Error::NoChannel);
@@ -101,13 +104,24 @@ async fn move_thread_to_forum_channel(
 			.map_err(|e| Error::UnableToCreateWebhook(e.to_string()))?
 	};
 
-	let mut messages = get_messages(ctx, source_channel.id)
+	let all_messages = get_messages(ctx, source_channel.id)
 		.await
-		.map(std::iter::IntoIterator::into_iter)
 		.map_err(|e| Error::UnableToRetieveMessages(e.to_string()))?;
 
+	if all_messages.is_empty() {
+		return Err(Error::NoMessages);
+	}
+
+	if skip >= all_messages.len() {
+		let last_message = all_messages.last().unwrap();
+		let last_url = format!("https://discord.com/channels/{}/{}/{}", last_message.guild_id.map(|g| g.to_string()).unwrap_or_else(|| "0".to_string()), last_message.channel_id, last_message.id);
+		return Err(Error::SkipExceedsMessages(last_url));
+	}
+
+	let messages: Vec<_> = all_messages.into_iter().skip(skip).collect();
+
 	let thread = {
-		let message = { messages.next() };
+		let message = { messages.first() };
 
 		let Some(first_message) = message else {
 			return Err(Error::NoMessages);
@@ -134,7 +148,7 @@ async fn move_thread_to_forum_channel(
 
 		let mut files = vec![];
 
-		for a in first_message.attachments {
+		for a in &first_message.attachments {
 			let Ok(attachment) = CreateAttachment::url(&ctx, &a.url).await else {
 				continue;
 			};
@@ -148,7 +162,8 @@ async fn move_thread_to_forum_channel(
 			.embeds(
 				first_message
 					.embeds
-					.into_iter()
+					.iter()
+					.cloned()
 					.map(std::convert::Into::into)
 					.collect::<Vec<_>>(),
 			)
@@ -175,7 +190,7 @@ async fn move_thread_to_forum_channel(
 	};
 
 	{
-		for message in messages {
+		for message in messages.into_iter().skip(1) {
 			let (username, display_name) = {
 				if let Some(ref member) = message.author.member
 					&& let Some(ref member) = member.user
@@ -240,6 +255,7 @@ async fn move_thread_to_existing_thread(
 	command: &CommandInteraction,
 	target_thread_id: ChannelId,
 	with_author: bool,
+	skip: usize,
 ) -> Result<(), Error> {
 	let Some(ref source_channel) = command.channel else {
 		return Err(Error::NoChannel);
@@ -271,10 +287,21 @@ async fn move_thread_to_existing_thread(
 		}
 	};
 
-	let mut messages = get_messages(ctx, source_channel.id)
+	let all_messages = get_messages(ctx, source_channel.id)
 		.await
-		.map(std::iter::IntoIterator::into_iter)
 		.map_err(|e| Error::UnableToRetieveMessages(e.to_string()))?;
+
+	if all_messages.is_empty() {
+		return Err(Error::NoMessages);
+	}
+
+	if skip >= all_messages.len() {
+		let last_message = all_messages.last().unwrap();
+		let last_url = format!("https://discord.com/channels/{}/{}/{}", last_message.guild_id.map(|g| g.to_string()).unwrap_or_else(|| "0".to_string()), last_message.channel_id, last_message.id);
+		return Err(Error::SkipExceedsMessages(last_url));
+	}
+
+	let messages: Vec<_> = all_messages.into_iter().skip(skip).collect();
 
 	for message in messages {
 		let (username, display_name) = {
@@ -381,6 +408,18 @@ pub async fn move_thread(ctx: &Context, command: &CommandInteraction, options: &
 		})
 		.unwrap_or(true);
 
+	let skip = options
+		.iter()
+		.find(|o| o.name == "skip")
+		.and_then(|o| {
+			if let ResolvedValue::Integer(value) = o.value {
+				Some(value as usize)
+			} else {
+				None
+			}
+		})
+		.unwrap_or(0);
+
 	let channel_option = options.iter().find(|o| o.name == "channel");
 	let thread_option = options.iter().find(|o| o.name == "thread");
 
@@ -397,7 +436,7 @@ pub async fn move_thread(ctx: &Context, command: &CommandInteraction, options: &
 				..
 			}),
 			_,
-		) => match move_thread_to_forum_channel(ctx, command, target_channel, with_author).await {
+		) => match move_thread_to_forum_channel(ctx, command, target_channel, with_author, skip).await {
 			Ok(_) => format!("Message sent to {}", target_channel.id.mention()),
 			Err(error) => error.to_string(),
 		},
@@ -409,7 +448,7 @@ pub async fn move_thread(ctx: &Context, command: &CommandInteraction, options: &
 			}),
 		) => {
 			let thread_id = target_thread.id;
-			match move_thread_to_existing_thread(ctx, command, thread_id, with_author).await {
+			match move_thread_to_existing_thread(ctx, command, thread_id, with_author, skip).await {
 				Ok(_) => format!("Message sent to thread {}", thread_id.mention()),
 				Err(error) => error.to_string(),
 			}
@@ -452,6 +491,15 @@ impl EventHandler for Handler {
 							"thread",
 							"An existing thread to send messages to",
 						))
+						.add_option(
+							CreateCommandOption::new(
+								serenity::all::CommandOptionType::Integer,
+								"skip",
+								"Number of messages to skip from the start",
+							)
+							.min_int_value(0)
+							.required(false),
+						)
 						.add_option(
 							CreateCommandOption::new(
 								serenity::all::CommandOptionType::Boolean,
