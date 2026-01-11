@@ -53,6 +53,7 @@ enum Error {
 	NotAllowed,
 	AlreadyProcessing,
 	NotImplemented,
+	ThreadNotFound,
 }
 
 impl std::fmt::Display for Error {
@@ -66,6 +67,7 @@ impl std::fmt::Display for Error {
 			Error::NotAllowed => write!(f, "Not allowed"),
 			Error::AlreadyProcessing => write!(f, "Already processing"),
 			Error::NotImplemented => write!(f, "Not implemented :("),
+			Error::ThreadNotFound => write!(f, "Thread not found. Use <channel> if you want the bot to create a new thread."),
 		}
 	}
 }
@@ -233,6 +235,105 @@ async fn move_thread_to_forum_channel(
 	Ok(())
 }
 
+async fn move_thread_to_existing_thread(
+	ctx: &Context,
+	command: &CommandInteraction,
+	target_thread_id: ChannelId,
+	with_author: bool,
+) -> Result<(), Error> {
+	let Some(ref source_channel) = command.channel else {
+		return Err(Error::NoChannel);
+	};
+
+	let thread_channel = match target_thread_id.to_channel(ctx).await {
+		Ok(Channel::Guild(thread)) if thread.kind == ChannelType::PublicThread => thread,
+		_ => return Err(Error::ThreadNotFound),
+	};
+
+	let wh = {
+		let target_channel_id = thread_channel.parent_id.ok_or_else(|| Error::ThreadNotFound)?;
+
+		if let Some(wh) = target_channel_id
+			.webhooks(ctx)
+			.await
+			.unwrap_or_default()
+			.into_iter()
+			.find(|e| e.name.as_deref().unwrap_or_default() == MVT_MIGRATOR)
+		{
+			wh
+		} else {
+			let webhook = CreateWebhook::new(MVT_MIGRATOR).name(MVT_MIGRATOR);
+
+			target_channel_id
+				.create_webhook(ctx, webhook)
+				.await
+				.map_err(|e| Error::UnableToCreateWebhook(e.to_string()))?
+		}
+	};
+
+	let mut messages = get_messages(ctx, source_channel.id)
+		.await
+		.map(std::iter::IntoIterator::into_iter)
+		.map_err(|e| Error::UnableToRetieveMessages(e.to_string()))?;
+
+	for message in messages {
+		let (username, display_name) = {
+			if let Some(ref member) = message.author.member
+				&& let Some(ref member) = member.user
+			{
+				(&member.name.as_str(), member.display_name())
+			} else {
+				let user = &message.author;
+				(&user.name.as_str(), user.display_name())
+			}
+		};
+
+		let mut files = vec![];
+
+		for a in message.attachments {
+			let Ok(attachment) = CreateAttachment::url(&ctx, &a.url).await else {
+				continue;
+			};
+			files.push(attachment);
+		}
+
+		let ex = ExecuteWebhook::new()
+			.in_thread(target_thread_id)
+			.content(message.content)
+			.username(format!("{display_name} - ({username})"))
+			.allowed_mentions(CreateAllowedMentions::new().empty_users().empty_roles())
+			.add_files(files)
+			.embeds(
+				message
+					.embeds
+					.into_iter()
+					.map(std::convert::Into::into)
+					.collect::<Vec<_>>(),
+			);
+
+		let ex = if let Some(avatar) = message.author.avatar_url() {
+			ex.avatar_url(avatar)
+		} else {
+			ex
+		};
+
+		wh.execute(ctx, false, ex).await.ok();
+	}
+
+	if with_author {
+		let moved_by_content = format!("||Moved by: {}||", command.user.mention());
+		let ex = ExecuteWebhook::new()
+			.in_thread(target_thread_id)
+			.content(moved_by_content)
+			.username("Thread Migrator")
+			.allowed_mentions(CreateAllowedMentions::new().empty_users().empty_roles());
+
+		wh.execute(ctx, false, ex).await.ok();
+	}
+
+	Ok(())
+}
+
 pub async fn get_messages(ctx: &Context, channel_id: ChannelId) -> Result<Vec<Message>, serenity::Error> {
 	let mut page: Option<MessagePagination> = None;
 
@@ -280,22 +381,40 @@ pub async fn move_thread(ctx: &Context, command: &CommandInteraction, options: &
 		})
 		.unwrap_or(true);
 
-	let option = options.iter().find(|o| o.name == "channel");
-	match option {
-		Some(ResolvedOption {
-			value:
-				ResolvedValue::Channel(
-					target_channel @ PartialChannel {
-						kind: ChannelType::Forum,
-						..
-					},
-				),
-			..
-		}) => match move_thread_to_forum_channel(ctx, command, target_channel, with_author).await {
+	let channel_option = options.iter().find(|o| o.name == "channel");
+	let thread_option = options.iter().find(|o| o.name == "thread");
+
+	match (channel_option, thread_option) {
+		(
+			Some(ResolvedOption {
+				value:
+					ResolvedValue::Channel(
+						target_channel @ PartialChannel {
+							kind: ChannelType::Forum,
+							..
+						},
+					),
+				..
+			}),
+			_,
+		) => match move_thread_to_forum_channel(ctx, command, target_channel, with_author).await {
 			Ok(_) => format!("Message sent to {}", target_channel.id.mention()),
 			Err(error) => error.to_string(),
 		},
-		_ => "Target channel is not a forum".to_string(),
+		(
+			_,
+			Some(ResolvedOption {
+				value: ResolvedValue::Channel(target_thread),
+				..
+			}),
+		) => {
+			let thread_id = target_thread.id;
+			match move_thread_to_existing_thread(ctx, command, thread_id, with_author).await {
+				Ok(_) => format!("Message sent to thread {}", thread_id.mention()),
+				Err(error) => error.to_string(),
+			}
+		}
+		_ => "Target must be a forum channel or an existing thread".to_string(),
 	}
 }
 
@@ -326,7 +445,12 @@ impl EventHandler for Handler {
 						.add_option(CreateCommandOption::new(
 							serenity::all::CommandOptionType::Channel,
 							"channel",
-							"The target channel you want to move this thread to",
+							"The target forum channel (bot will create a new thread)",
+						))
+						.add_option(CreateCommandOption::new(
+							serenity::all::CommandOptionType::Channel,
+							"thread",
+							"An existing thread to send messages to",
 						))
 						.add_option(
 							CreateCommandOption::new(
